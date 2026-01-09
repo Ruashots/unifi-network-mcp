@@ -270,3 +270,4 @@ MIT
 - [UniFi Developer Portal](https://developer.ui.com/)
 - [UniFi Network API Documentation](https://developer.ui.com/unifi-api/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
+
