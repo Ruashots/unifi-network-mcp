@@ -44,7 +44,6 @@ async function unifiRequest(
     throw new Error(`UniFi API error (${response.status}): ${errorText}`);
   }
 
-  // Handle empty responses (204 No Content)
   if (response.status === 204) {
     return { success: true };
   }
@@ -56,7 +55,7 @@ async function unifiRequest(
 const server = new Server(
   {
     name: "unifi-network-mcp",
-    version: "1.0.1",
+    version: "1.1.0",
   },
   {
     capabilities: {
@@ -162,6 +161,30 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["siteId", "deviceId", "enabled"],
         },
       },
+      {
+        name: "unifi_list_pending_devices",
+        description: "List devices pending adoption at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_power_cycle_port",
+        description: "Power cycle a specific port on a device (PoE restart)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            deviceId: { type: "string", description: "Device ID" },
+            portIdx: { type: "number", description: "Port index number" },
+          },
+          required: ["siteId", "deviceId", "portIdx"],
+        },
+      },
 
       // ============================================
       // CLIENTS
@@ -197,18 +220,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             siteId: { type: "string", description: "Site ID" },
             clientId: { type: "string", description: "Client ID" },
-            expiresAt: { type: "string", description: "ISO 8601 timestamp when authorization expires" },
-            usageQuota: {
-              type: "object",
-              description: "Optional usage limits",
-              properties: {
-                dataTx: { type: "number", description: "Upload limit in bytes" },
-                dataRx: { type: "number", description: "Download limit in bytes" },
-                dataTotal: { type: "number", description: "Total data limit in bytes" },
-              },
-            },
+            timeLimitMinutes: { type: "number", description: "How long (in minutes) the guest will be authorized (1-1000000)" },
+            dataUsageLimitMBytes: { type: "number", description: "Data usage limit in megabytes (1-1048576)" },
+            rxRateLimitKbps: { type: "number", description: "Download rate limit in kilobits per second (2-100000)" },
+            txRateLimitKbps: { type: "number", description: "Upload rate limit in kilobits per second (2-100000)" },
           },
-          required: ["siteId", "clientId", "expiresAt"],
+          required: ["siteId", "clientId"],
         },
       },
 
@@ -246,17 +263,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             siteId: { type: "string", description: "Site ID" },
             name: { type: "string", description: "Network name" },
-            purpose: { type: "string", enum: ["corporate", "guest", "wan", "vlan-only"], description: "Network purpose" },
-            vlanId: { type: "number", description: "VLAN ID (1-4094)" },
-            dhcpEnabled: { type: "boolean", description: "Enable DHCP server" },
-            dhcpStart: { type: "string", description: "DHCP range start IP" },
-            dhcpStop: { type: "string", description: "DHCP range end IP" },
-            gateway: { type: "string", description: "Gateway IP address" },
-            subnet: { type: "string", description: "Subnet in CIDR notation (e.g., 192.168.1.0/24)" },
-            domainName: { type: "string", description: "Domain name for the network" },
-            internetAccessEnabled: { type: "boolean", description: "Allow internet access" },
+            management: { type: "string", enum: ["UNMANAGED", "GATEWAY"], description: "Network management type" },
+            enabled: { type: "boolean", description: "Enable the network" },
+            vlanId: { type: "number", description: "VLAN ID (2-4000)" },
           },
-          required: ["siteId", "name", "purpose"],
+          required: ["siteId", "name", "management", "enabled", "vlanId"],
         },
       },
       {
@@ -268,15 +279,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             siteId: { type: "string", description: "Site ID" },
             networkId: { type: "string", description: "Network ID" },
             name: { type: "string", description: "Network name" },
-            purpose: { type: "string", enum: ["corporate", "guest", "wan", "vlan-only"], description: "Network purpose" },
-            vlanId: { type: "number", description: "VLAN ID (1-4094)" },
-            dhcpEnabled: { type: "boolean", description: "Enable DHCP server" },
-            dhcpStart: { type: "string", description: "DHCP range start IP" },
-            dhcpStop: { type: "string", description: "DHCP range end IP" },
-            gateway: { type: "string", description: "Gateway IP address" },
-            subnet: { type: "string", description: "Subnet in CIDR notation" },
-            domainName: { type: "string", description: "Domain name for the network" },
-            internetAccessEnabled: { type: "boolean", description: "Allow internet access" },
+            management: { type: "string", enum: ["UNMANAGED", "GATEWAY"], description: "Network management type" },
+            enabled: { type: "boolean", description: "Enable the network" },
+            vlanId: { type: "number", description: "VLAN ID (2-4000)" },
           },
           required: ["siteId", "networkId"],
         },
@@ -289,8 +294,79 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             siteId: { type: "string", description: "Site ID" },
             networkId: { type: "string", description: "Network ID" },
+            cascade: { type: "boolean", description: "Cascade delete (default: false)" },
+            force: { type: "boolean", description: "Force delete (default: false)" },
           },
           required: ["siteId", "networkId"],
+        },
+      },
+
+      // ============================================
+      // WIFI BROADCASTS
+      // ============================================
+      {
+        name: "unifi_list_wifi",
+        description: "List all WiFi networks (SSIDs) at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_get_wifi",
+        description: "Get a specific WiFi network by ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            wifiBroadcastId: { type: "string", description: "WiFi Broadcast ID" },
+          },
+          required: ["siteId", "wifiBroadcastId"],
+        },
+      },
+      {
+        name: "unifi_create_wifi",
+        description: "Create a new WiFi network (SSID)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            name: { type: "string", description: "SSID name" },
+            enabled: { type: "boolean", description: "Enable the WiFi network" },
+            type: { type: "string", enum: ["STANDARD"], description: "WiFi type" },
+            broadcastingFrequenciesGHz: { type: "array", items: { type: "string" }, description: "Frequencies: 2.4, 5, 6" },
+          },
+          required: ["siteId", "name", "enabled", "type", "broadcastingFrequenciesGHz"],
+        },
+      },
+      {
+        name: "unifi_update_wifi",
+        description: "Update an existing WiFi network",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            wifiBroadcastId: { type: "string", description: "WiFi Broadcast ID" },
+            name: { type: "string", description: "SSID name" },
+            enabled: { type: "boolean", description: "Enable the WiFi network" },
+          },
+          required: ["siteId", "wifiBroadcastId"],
+        },
+      },
+      {
+        name: "unifi_delete_wifi",
+        description: "Delete a WiFi network",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            wifiBroadcastId: { type: "string", description: "WiFi Broadcast ID" },
+            force: { type: "boolean", description: "Force delete (default: false)" },
+          },
+          required: ["siteId", "wifiBroadcastId"],
         },
       },
 
@@ -327,35 +403,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
-            count: { type: "number", description: "Number of vouchers to create" },
-            duration: { type: "number", description: "Duration in minutes" },
-            usageQuota: {
-              type: "object",
-              description: "Optional usage limits",
-              properties: {
-                dataTx: { type: "number", description: "Upload limit in bytes" },
-                dataRx: { type: "number", description: "Download limit in bytes" },
-                dataTotal: { type: "number", description: "Total data limit in bytes" },
-              },
-            },
-            multiUse: { type: "boolean", description: "Allow multiple uses" },
-            maxUses: { type: "number", description: "Maximum number of uses (if multiUse is true)" },
-            note: { type: "string", description: "Note/description for the vouchers" },
+            count: { type: "number", description: "Number of vouchers to create (1-1000)" },
+            timeLimitMinutes: { type: "number", description: "How long the voucher provides access (1-1000000 minutes)" },
+            name: { type: "string", description: "Voucher note/name" },
+            authorizedGuestLimit: { type: "number", description: "How many guests can use this voucher" },
+            dataUsageLimitMBytes: { type: "number", description: "Data usage limit in megabytes" },
+            rxRateLimitKbps: { type: "number", description: "Download rate limit in kbps" },
+            txRateLimitKbps: { type: "number", description: "Upload rate limit in kbps" },
           },
-          required: ["siteId", "count", "duration"],
-        },
-      },
-      {
-        name: "unifi_update_voucher",
-        description: "Update a hotspot voucher",
-        inputSchema: {
-          type: "object",
-          properties: {
-            siteId: { type: "string", description: "Site ID" },
-            voucherId: { type: "string", description: "Voucher ID" },
-            note: { type: "string", description: "Note/description for the voucher" },
-          },
-          required: ["siteId", "voucherId"],
+          required: ["siteId", "count", "timeLimitMinutes"],
         },
       },
       {
@@ -372,7 +428,216 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
 
       // ============================================
-      // WAN
+      // FIREWALL ZONES
+      // ============================================
+      {
+        name: "unifi_list_firewall_zones",
+        description: "List all firewall zones at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_get_firewall_zone",
+        description: "Get a specific firewall zone by ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            firewallZoneId: { type: "string", description: "Firewall zone ID" },
+          },
+          required: ["siteId", "firewallZoneId"],
+        },
+      },
+      {
+        name: "unifi_create_firewall_zone",
+        description: "Create a new custom firewall zone",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            name: { type: "string", description: "Zone name" },
+            networkIds: { type: "array", items: { type: "string" }, description: "Network IDs to include in this zone" },
+          },
+          required: ["siteId", "name", "networkIds"],
+        },
+      },
+      {
+        name: "unifi_update_firewall_zone",
+        description: "Update a firewall zone",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            firewallZoneId: { type: "string", description: "Firewall zone ID" },
+            name: { type: "string", description: "Zone name" },
+            networkIds: { type: "array", items: { type: "string" }, description: "Network IDs to include in this zone" },
+          },
+          required: ["siteId", "firewallZoneId", "name", "networkIds"],
+        },
+      },
+      {
+        name: "unifi_delete_firewall_zone",
+        description: "Delete a custom firewall zone",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            firewallZoneId: { type: "string", description: "Firewall zone ID" },
+          },
+          required: ["siteId", "firewallZoneId"],
+        },
+      },
+
+      // ============================================
+      // ACL RULES
+      // ============================================
+      {
+        name: "unifi_list_acl_rules",
+        description: "List all ACL (firewall) rules at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_get_acl_rule",
+        description: "Get a specific ACL rule by ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            aclRuleId: { type: "string", description: "ACL rule ID" },
+          },
+          required: ["siteId", "aclRuleId"],
+        },
+      },
+      {
+        name: "unifi_create_acl_rule",
+        description: "Create a new ACL (firewall) rule",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            type: { type: "string", enum: ["IPV4"], description: "Rule type" },
+            name: { type: "string", description: "Rule name" },
+            enabled: { type: "boolean", description: "Enable the rule" },
+            action: { type: "string", enum: ["ALLOW", "BLOCK"], description: "Rule action" },
+            index: { type: "number", description: "Rule priority index (lower = higher priority)" },
+            description: { type: "string", description: "Rule description" },
+            protocolFilter: { type: "array", items: { type: "string" }, description: "Protocols: TCP, UDP" },
+          },
+          required: ["siteId", "type", "name", "enabled", "action", "index"],
+        },
+      },
+      {
+        name: "unifi_update_acl_rule",
+        description: "Update an ACL rule",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            aclRuleId: { type: "string", description: "ACL rule ID" },
+            type: { type: "string", enum: ["IPV4"], description: "Rule type" },
+            name: { type: "string", description: "Rule name" },
+            enabled: { type: "boolean", description: "Enable the rule" },
+            action: { type: "string", enum: ["ALLOW", "BLOCK"], description: "Rule action" },
+            index: { type: "number", description: "Rule priority index" },
+            description: { type: "string", description: "Rule description" },
+          },
+          required: ["siteId", "aclRuleId"],
+        },
+      },
+      {
+        name: "unifi_delete_acl_rule",
+        description: "Delete an ACL rule",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            aclRuleId: { type: "string", description: "ACL rule ID" },
+          },
+          required: ["siteId", "aclRuleId"],
+        },
+      },
+
+      // ============================================
+      // TRAFFIC MATCHING LISTS
+      // ============================================
+      {
+        name: "unifi_list_traffic_matching_lists",
+        description: "List all traffic matching lists at a site (port groups, IP groups)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_get_traffic_matching_list",
+        description: "Get a specific traffic matching list by ID",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            trafficMatchingListId: { type: "string", description: "Traffic matching list ID" },
+          },
+          required: ["siteId", "trafficMatchingListId"],
+        },
+      },
+      {
+        name: "unifi_create_traffic_matching_list",
+        description: "Create a new traffic matching list",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            type: { type: "string", enum: ["PORTS", "IP_ADDRESSES"], description: "List type" },
+            name: { type: "string", description: "List name" },
+            items: { type: "array", description: "List items (ports or IP addresses)" },
+          },
+          required: ["siteId", "type", "name", "items"],
+        },
+      },
+      {
+        name: "unifi_update_traffic_matching_list",
+        description: "Update a traffic matching list",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            trafficMatchingListId: { type: "string", description: "Traffic matching list ID" },
+            type: { type: "string", enum: ["PORTS", "IP_ADDRESSES"], description: "List type" },
+            name: { type: "string", description: "List name" },
+            items: { type: "array", description: "List items" },
+          },
+          required: ["siteId", "trafficMatchingListId"],
+        },
+      },
+      {
+        name: "unifi_delete_traffic_matching_list",
+        description: "Delete a traffic matching list",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            trafficMatchingListId: { type: "string", description: "Traffic matching list ID" },
+          },
+          required: ["siteId", "trafficMatchingListId"],
+        },
+      },
+
+      // ============================================
+      // SUPPORTING RESOURCES
       // ============================================
       {
         name: "unifi_list_wans",
@@ -384,6 +649,65 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["siteId"],
         },
+      },
+      {
+        name: "unifi_list_vpn_tunnels",
+        description: "List all site-to-site VPN tunnels at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_list_vpn_servers",
+        description: "List all VPN servers at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_list_radius_profiles",
+        description: "List all RADIUS profiles at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_list_device_tags",
+        description: "List all device tags at a site",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+          },
+          required: ["siteId"],
+        },
+      },
+      {
+        name: "unifi_list_dpi_categories",
+        description: "List all DPI (Deep Packet Inspection) categories",
+        inputSchema: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "unifi_list_dpi_applications",
+        description: "List all DPI applications for traffic identification",
+        inputSchema: { type: "object", properties: {}, required: [] },
+      },
+      {
+        name: "unifi_list_countries",
+        description: "List all countries/regions for geo-based rules",
+        inputSchema: { type: "object", properties: {}, required: [] },
       },
     ],
   };
@@ -428,18 +752,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "unifi_adopt_device":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/devices/${args.deviceId}/actions/adopt`, "POST");
+        result = await unifiRequest(
+          `/v1/sites/${args.siteId}/devices/${args.deviceId}/actions`,
+          "POST",
+          { action: "ADOPT" }
+        );
         break;
 
       case "unifi_restart_device":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/devices/${args.deviceId}/actions/restart`, "POST");
+        result = await unifiRequest(
+          `/v1/sites/${args.siteId}/devices/${args.deviceId}/actions`,
+          "POST",
+          { action: "RESTART" }
+        );
         break;
 
       case "unifi_locate_device":
         result = await unifiRequest(
-          `/v1/sites/${args.siteId}/devices/${args.deviceId}/actions/locate`,
+          `/v1/sites/${args.siteId}/devices/${args.deviceId}/actions`,
           "POST",
-          { enabled: args.enabled }
+          { action: args.enabled ? "LOCATE_ON" : "LOCATE_OFF" }
+        );
+        break;
+
+      case "unifi_list_pending_devices":
+        result = await unifiRequest(`/v1/pending-devices`);
+        break;
+
+      case "unifi_power_cycle_port":
+        result = await unifiRequest(
+          `/v1/sites/${args.siteId}/devices/${args.deviceId}/interfaces/ports/${args.portIdx}/actions`,
+          "POST",
+          { action: "POWER_CYCLE" }
         );
         break;
 
@@ -455,10 +799,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "unifi_authorize_guest": {
-        const authBody: Record<string, unknown> = { expiresAt: args.expiresAt };
-        if (args.usageQuota) authBody.usageQuota = args.usageQuota;
+        const authBody: Record<string, unknown> = { action: "AUTHORIZE_GUEST_ACCESS" };
+        if (args.timeLimitMinutes) authBody.timeLimitMinutes = args.timeLimitMinutes;
+        if (args.dataUsageLimitMBytes) authBody.dataUsageLimitMBytes = args.dataUsageLimitMBytes;
+        if (args.rxRateLimitKbps) authBody.rxRateLimitKbps = args.rxRateLimitKbps;
+        if (args.txRateLimitKbps) authBody.txRateLimitKbps = args.txRateLimitKbps;
         result = await unifiRequest(
-          `/v1/sites/${args.siteId}/clients/${args.clientId}/actions/authorizeGuest`,
+          `/v1/sites/${args.siteId}/clients/${args.clientId}/actions`,
           "POST",
           authBody
         );
@@ -478,81 +825,242 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "unifi_create_network": {
         const networkBody: Record<string, unknown> = {
+          management: args.management,
           name: args.name,
-          purpose: args.purpose,
+          enabled: args.enabled,
+          vlanId: args.vlanId,
         };
-        if (args.vlanId !== undefined) networkBody.vlanId = args.vlanId;
-        if (args.dhcpEnabled !== undefined) networkBody.dhcpEnabled = args.dhcpEnabled;
-        if (args.dhcpStart) networkBody.dhcpStart = args.dhcpStart;
-        if (args.dhcpStop) networkBody.dhcpStop = args.dhcpStop;
-        if (args.gateway) networkBody.gateway = args.gateway;
-        if (args.subnet) networkBody.subnet = args.subnet;
-        if (args.domainName) networkBody.domainName = args.domainName;
-        if (args.internetAccessEnabled !== undefined) networkBody.internetAccessEnabled = args.internetAccessEnabled;
         result = await unifiRequest(`/v1/sites/${args.siteId}/networks`, "POST", networkBody);
         break;
       }
 
       case "unifi_update_network": {
         const updateNetworkBody: Record<string, unknown> = {};
+        if (args.management) updateNetworkBody.management = args.management;
         if (args.name) updateNetworkBody.name = args.name;
-        if (args.purpose) updateNetworkBody.purpose = args.purpose;
+        if (args.enabled !== undefined) updateNetworkBody.enabled = args.enabled;
         if (args.vlanId !== undefined) updateNetworkBody.vlanId = args.vlanId;
-        if (args.dhcpEnabled !== undefined) updateNetworkBody.dhcpEnabled = args.dhcpEnabled;
-        if (args.dhcpStart) updateNetworkBody.dhcpStart = args.dhcpStart;
-        if (args.dhcpStop) updateNetworkBody.dhcpStop = args.dhcpStop;
-        if (args.gateway) updateNetworkBody.gateway = args.gateway;
-        if (args.subnet) updateNetworkBody.subnet = args.subnet;
-        if (args.domainName) updateNetworkBody.domainName = args.domainName;
-        if (args.internetAccessEnabled !== undefined) updateNetworkBody.internetAccessEnabled = args.internetAccessEnabled;
         result = await unifiRequest(`/v1/sites/${args.siteId}/networks/${args.networkId}`, "PUT", updateNetworkBody);
         break;
       }
 
-      case "unifi_delete_network":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/networks/${args.networkId}`, "DELETE");
+      case "unifi_delete_network": {
+        let endpoint = `/v1/sites/${args.siteId}/networks/${args.networkId}`;
+        const params = new URLSearchParams();
+        if (args.cascade) params.append("cascade", "true");
+        if (args.force) params.append("force", "true");
+        if (params.toString()) endpoint += `?${params.toString()}`;
+        result = await unifiRequest(endpoint, "DELETE");
         break;
+      }
+
+      // ============================================
+      // WIFI BROADCASTS
+      // ============================================
+      case "unifi_list_wifi":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/wifi/broadcasts`);
+        break;
+
+      case "unifi_get_wifi":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/wifi/broadcasts/${args.wifiBroadcastId}`);
+        break;
+
+      case "unifi_create_wifi": {
+        const wifiBody: Record<string, unknown> = {
+          type: args.type || "STANDARD",
+          name: args.name,
+          enabled: args.enabled,
+          broadcastingFrequenciesGHz: args.broadcastingFrequenciesGHz,
+        };
+        result = await unifiRequest(`/v1/sites/${args.siteId}/wifi/broadcasts`, "POST", wifiBody);
+        break;
+      }
+
+      case "unifi_update_wifi": {
+        const updateWifiBody: Record<string, unknown> = {};
+        if (args.name) updateWifiBody.name = args.name;
+        if (args.enabled !== undefined) updateWifiBody.enabled = args.enabled;
+        result = await unifiRequest(`/v1/sites/${args.siteId}/wifi/broadcasts/${args.wifiBroadcastId}`, "PUT", updateWifiBody);
+        break;
+      }
+
+      case "unifi_delete_wifi": {
+        let endpoint = `/v1/sites/${args.siteId}/wifi/broadcasts/${args.wifiBroadcastId}`;
+        if (args.force) endpoint += "?force=true";
+        result = await unifiRequest(endpoint, "DELETE");
+        break;
+      }
 
       // ============================================
       // HOTSPOT VOUCHERS
       // ============================================
       case "unifi_list_vouchers":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspotVouchers`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers`);
         break;
 
       case "unifi_get_voucher":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspotVouchers/${args.voucherId}`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers/${args.voucherId}`);
         break;
 
       case "unifi_create_voucher": {
         const voucherBody: Record<string, unknown> = {
-          count: args.count,
-          duration: args.duration,
+          count: args.count || 1,
+          timeLimitMinutes: args.timeLimitMinutes,
         };
-        if (args.usageQuota) voucherBody.usageQuota = args.usageQuota;
-        if (args.multiUse !== undefined) voucherBody.multiUse = args.multiUse;
-        if (args.maxUses !== undefined) voucherBody.maxUses = args.maxUses;
-        if (args.note) voucherBody.note = args.note;
-        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspotVouchers`, "POST", voucherBody);
-        break;
-      }
-
-      case "unifi_update_voucher": {
-        const updateVoucherBody: Record<string, unknown> = {};
-        if (args.note) updateVoucherBody.note = args.note;
-        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspotVouchers/${args.voucherId}`, "PUT", updateVoucherBody);
+        if (args.name) voucherBody.name = args.name;
+        if (args.authorizedGuestLimit) voucherBody.authorizedGuestLimit = args.authorizedGuestLimit;
+        if (args.dataUsageLimitMBytes) voucherBody.dataUsageLimitMBytes = args.dataUsageLimitMBytes;
+        if (args.rxRateLimitKbps) voucherBody.rxRateLimitKbps = args.rxRateLimitKbps;
+        if (args.txRateLimitKbps) voucherBody.txRateLimitKbps = args.txRateLimitKbps;
+        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers`, "POST", voucherBody);
         break;
       }
 
       case "unifi_delete_voucher":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspotVouchers/${args.voucherId}`, "DELETE");
+        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers/${args.voucherId}`, "DELETE");
         break;
 
       // ============================================
-      // WAN
+      // FIREWALL ZONES
+      // ============================================
+      case "unifi_list_firewall_zones":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones`);
+        break;
+
+      case "unifi_get_firewall_zone":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones/${args.firewallZoneId}`);
+        break;
+
+      case "unifi_create_firewall_zone": {
+        const zoneBody: Record<string, unknown> = {
+          name: args.name,
+          networkIds: args.networkIds || [],
+        };
+        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones`, "POST", zoneBody);
+        break;
+      }
+
+      case "unifi_update_firewall_zone": {
+        const updateZoneBody: Record<string, unknown> = {
+          name: args.name,
+          networkIds: args.networkIds,
+        };
+        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones/${args.firewallZoneId}`, "PUT", updateZoneBody);
+        break;
+      }
+
+      case "unifi_delete_firewall_zone":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones/${args.firewallZoneId}`, "DELETE");
+        break;
+
+      // ============================================
+      // ACL RULES
+      // ============================================
+      case "unifi_list_acl_rules":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules`);
+        break;
+
+      case "unifi_get_acl_rule":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules/${args.aclRuleId}`);
+        break;
+
+      case "unifi_create_acl_rule": {
+        const ruleBody: Record<string, unknown> = {
+          type: args.type || "IPV4",
+          name: args.name,
+          enabled: args.enabled,
+          action: args.action,
+          index: args.index,
+        };
+        if (args.description) ruleBody.description = args.description;
+        if (args.protocolFilter) ruleBody.protocolFilter = args.protocolFilter;
+        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules`, "POST", ruleBody);
+        break;
+      }
+
+      case "unifi_update_acl_rule": {
+        const updateRuleBody: Record<string, unknown> = {};
+        if (args.type) updateRuleBody.type = args.type;
+        if (args.name) updateRuleBody.name = args.name;
+        if (args.enabled !== undefined) updateRuleBody.enabled = args.enabled;
+        if (args.action) updateRuleBody.action = args.action;
+        if (args.index !== undefined) updateRuleBody.index = args.index;
+        if (args.description) updateRuleBody.description = args.description;
+        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules/${args.aclRuleId}`, "PUT", updateRuleBody);
+        break;
+      }
+
+      case "unifi_delete_acl_rule":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules/${args.aclRuleId}`, "DELETE");
+        break;
+
+      // ============================================
+      // TRAFFIC MATCHING LISTS
+      // ============================================
+      case "unifi_list_traffic_matching_lists":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists`);
+        break;
+
+      case "unifi_get_traffic_matching_list":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists/${args.trafficMatchingListId}`);
+        break;
+
+      case "unifi_create_traffic_matching_list": {
+        const listBody: Record<string, unknown> = {
+          type: args.type,
+          name: args.name,
+          items: args.items,
+        };
+        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists`, "POST", listBody);
+        break;
+      }
+
+      case "unifi_update_traffic_matching_list": {
+        const updateListBody: Record<string, unknown> = {};
+        if (args.type) updateListBody.type = args.type;
+        if (args.name) updateListBody.name = args.name;
+        if (args.items) updateListBody.items = args.items;
+        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists/${args.trafficMatchingListId}`, "PUT", updateListBody);
+        break;
+      }
+
+      case "unifi_delete_traffic_matching_list":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists/${args.trafficMatchingListId}`, "DELETE");
+        break;
+
+      // ============================================
+      // SUPPORTING RESOURCES
       // ============================================
       case "unifi_list_wans":
         result = await unifiRequest(`/v1/sites/${args.siteId}/wans`);
+        break;
+
+      case "unifi_list_vpn_tunnels":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/vpn/site-to-site-tunnels`);
+        break;
+
+      case "unifi_list_vpn_servers":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/vpn/servers`);
+        break;
+
+      case "unifi_list_radius_profiles":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/radius/profiles`);
+        break;
+
+      case "unifi_list_device_tags":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/device-tags`);
+        break;
+
+      case "unifi_list_dpi_categories":
+        result = await unifiRequest("/v1/dpi/categories");
+        break;
+
+      case "unifi_list_dpi_applications":
+        result = await unifiRequest("/v1/dpi/applications");
+        break;
+
+      case "unifi_list_countries":
+        result = await unifiRequest("/v1/countries");
         break;
 
       default:
