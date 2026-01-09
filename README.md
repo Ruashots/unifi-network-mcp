@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server for the [UniFi Network API](https://develo
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/unifi-network-mcp/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ruashots/unifi-network-mcp/master/install.sh | bash
 ```
 
 This will:
@@ -58,7 +58,7 @@ This will:
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/unifi-network-mcp.git
+git clone https://github.com/Ruashots/unifi-network-mcp.git
 cd unifi-network-mcp
 
 # Install dependencies

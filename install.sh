@@ -67,7 +67,7 @@ clone_or_update_repo() {
         git pull origin master
     else
         print_info "Cloning repository..."
-        git clone https://github.com/YOUR_USERNAME/unifi-network-mcp.git "$INSTALL_DIR"
+        git clone https://github.com/Ruashots/unifi-network-mcp.git "$INSTALL_DIR"
         cd "$INSTALL_DIR"
     fi
     print_success "Repository ready"
