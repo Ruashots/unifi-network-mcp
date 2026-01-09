@@ -148,7 +148,8 @@ update_claude_settings() {
       "args": ["$INSTALL_DIR/dist/index.js"],
       "env": {
         "UNIFI_BASE_URL": "$UNIFI_URL",
-        "UNIFI_API_KEY": "$UNIFI_KEY"
+        "UNIFI_API_KEY": "$UNIFI_KEY",
+        "NODE_TLS_REJECT_UNAUTHORIZED": "0"
       }
     }
   }
@@ -167,7 +168,8 @@ EOF
           "args": [($dir + "/dist/index.js")],
           "env": {
             "UNIFI_BASE_URL": $url,
-            "UNIFI_API_KEY": $key
+            "UNIFI_API_KEY": $key,
+            "NODE_TLS_REJECT_UNAUTHORIZED": "0"
           }
         }' "$CLAUDE_SETTINGS" > "$tmp_file" && mv "$tmp_file" "$CLAUDE_SETTINGS"
 
