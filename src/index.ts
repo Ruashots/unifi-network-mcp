@@ -55,7 +55,7 @@ async function unifiRequest(
 const server = new Server(
   {
     name: "unifi-network-mcp",
-    version: "1.1.0",
+    version: "1.2.0",
   },
   {
     capabilities: {
@@ -300,6 +300,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["siteId", "networkId"],
         },
       },
+      {
+        name: "unifi_get_network_references",
+        description: "Get references to a network (what WiFi broadcasts, firewall zones, etc. use this network)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            networkId: { type: "string", description: "Network ID" },
+          },
+          required: ["siteId", "networkId"],
+        },
+      },
 
       // ============================================
       // WIFI BROADCASTS
@@ -424,6 +436,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             voucherId: { type: "string", description: "Voucher ID" },
           },
           required: ["siteId", "voucherId"],
+        },
+      },
+      {
+        name: "unifi_bulk_delete_vouchers",
+        description: "Bulk delete hotspot vouchers with optional filter (e.g., 'expired' to delete all expired vouchers)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            siteId: { type: "string", description: "Site ID" },
+            filter: { type: "string", description: "Filter for bulk delete (e.g., 'expired')" },
+          },
+          required: ["siteId"],
         },
       },
 
@@ -854,6 +878,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
+      case "unifi_get_network_references":
+        result = await unifiRequest(`/v1/sites/${args.siteId}/networks/${args.networkId}/references`);
+        break;
+
       // ============================================
       // WIFI BROADCASTS
       // ============================================
@@ -919,6 +947,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "unifi_delete_voucher":
         result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers/${args.voucherId}`, "DELETE");
         break;
+
+      case "unifi_bulk_delete_vouchers": {
+        let endpoint = `/v1/sites/${args.siteId}/hotspot/vouchers`;
+        if (args.filter) endpoint += `?filter=${encodeURIComponent(args.filter as string)}`;
+        result = await unifiRequest(endpoint, "DELETE");
+        break;
+      }
 
       // ============================================
       // FIREWALL ZONES
