@@ -16,6 +16,16 @@ if (!UNIFI_BASE_URL || !UNIFI_API_KEY) {
   process.exit(1);
 }
 
+// Helper function to build query string for pagination and filtering
+function buildQueryString(args: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  if (args.offset !== undefined) params.append("offset", String(args.offset));
+  if (args.limit !== undefined) params.append("limit", String(args.limit));
+  if (args.filter) params.append("filter", String(args.filter));
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : "";
+}
+
 // Helper function to make UniFi API requests
 async function unifiRequest(
   endpoint: string,
@@ -55,7 +65,7 @@ async function unifiRequest(
 const server = new Server(
   {
     name: "unifi-network-mcp",
-    version: "1.2.0",
+    version: "1.3.0",
   },
   {
     capabilities: {
@@ -83,7 +93,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "unifi_list_sites",
         description: "List all sites available to the API key",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        inputSchema: {
+          type: "object",
+          properties: {
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression (e.g., 'name.like(office*)')" },
+          },
+          required: [],
+        },
       },
 
       // ============================================
@@ -91,11 +109,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // ============================================
       {
         name: "unifi_list_devices",
-        description: "List all devices at a site",
+        description: "List all adopted devices at a site",
         inputSchema: {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -163,13 +184,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "unifi_list_pending_devices",
-        description: "List devices pending adoption at a site",
+        description: "List devices pending adoption (global, not site-specific)",
         inputSchema: {
           type: "object",
           properties: {
-            siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
-          required: ["siteId"],
+          required: [],
         },
       },
       {
@@ -191,11 +214,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // ============================================
       {
         name: "unifi_list_clients",
-        description: "List all clients (connected devices/users) at a site",
+        description: "List all connected clients (wired, wireless, VPN) at a site",
         inputSchema: {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -239,6 +265,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -318,11 +347,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       // ============================================
       {
         name: "unifi_list_wifi",
-        description: "List all WiFi networks (SSIDs) at a site",
+        description: "List all WiFi broadcasts (SSIDs) at a site",
         inputSchema: {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -392,6 +424,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 100, max: 1000)" },
+            filter: { type: "string", description: "Filter expression (e.g., 'expired.eq(true)')" },
           },
           required: ["siteId"],
         },
@@ -415,15 +450,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
-            count: { type: "number", description: "Number of vouchers to create (1-1000)" },
+            name: { type: "string", description: "Voucher note/name (duplicated across all generated vouchers)" },
             timeLimitMinutes: { type: "number", description: "How long the voucher provides access (1-1000000 minutes)" },
-            name: { type: "string", description: "Voucher note/name" },
+            count: { type: "number", description: "Number of vouchers to create (1-1000, default: 1)" },
             authorizedGuestLimit: { type: "number", description: "How many guests can use this voucher" },
-            dataUsageLimitMBytes: { type: "number", description: "Data usage limit in megabytes" },
-            rxRateLimitKbps: { type: "number", description: "Download rate limit in kbps" },
-            txRateLimitKbps: { type: "number", description: "Upload rate limit in kbps" },
+            dataUsageLimitMBytes: { type: "number", description: "Data usage limit in megabytes (1-1048576)" },
+            rxRateLimitKbps: { type: "number", description: "Download rate limit in kbps (2-100000)" },
+            txRateLimitKbps: { type: "number", description: "Upload rate limit in kbps (2-100000)" },
           },
-          required: ["siteId", "count", "timeLimitMinutes"],
+          required: ["siteId", "name", "timeLimitMinutes"],
         },
       },
       {
@@ -440,14 +475,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "unifi_bulk_delete_vouchers",
-        description: "Bulk delete hotspot vouchers with optional filter (e.g., 'expired' to delete all expired vouchers)",
+        description: "Bulk delete hotspot vouchers based on filter criteria (e.g., 'expired.eq(true)' to delete all expired vouchers)",
         inputSchema: {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
-            filter: { type: "string", description: "Filter for bulk delete (e.g., 'expired')" },
+            filter: { type: "string", description: "Required filter expression (e.g., 'expired.eq(true)', 'name.like(guest*)')" },
           },
-          required: ["siteId"],
+          required: ["siteId", "filter"],
         },
       },
 
@@ -461,6 +496,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -527,6 +565,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -602,6 +643,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -670,6 +714,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
           },
           required: ["siteId"],
         },
@@ -681,6 +727,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -692,6 +741,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
@@ -703,35 +755,65 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
       },
       {
         name: "unifi_list_device_tags",
-        description: "List all device tags at a site",
+        description: "List all device tags at a site (used for WiFi broadcast assignments)",
         inputSchema: {
           type: "object",
           properties: {
             siteId: { type: "string", description: "Site ID" },
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
           },
           required: ["siteId"],
         },
       },
       {
         name: "unifi_list_dpi_categories",
-        description: "List all DPI (Deep Packet Inspection) categories",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        description: "List all DPI (Deep Packet Inspection) categories for traffic identification",
+        inputSchema: {
+          type: "object",
+          properties: {
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
+          },
+          required: [],
+        },
       },
       {
         name: "unifi_list_dpi_applications",
-        description: "List all DPI applications for traffic identification",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        description: "List all DPI applications for traffic identification and filtering",
+        inputSchema: {
+          type: "object",
+          properties: {
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression" },
+          },
+          required: [],
+        },
       },
       {
         name: "unifi_list_countries",
-        description: "List all countries/regions for geo-based rules",
-        inputSchema: { type: "object", properties: {}, required: [] },
+        description: "List all countries/regions for geo-based rules (ISO codes and names)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            offset: { type: "number", description: "Number of records to skip (default: 0)" },
+            limit: { type: "number", description: "Number of records to return (default: 25, max: 200)" },
+            filter: { type: "string", description: "Filter expression (e.g., 'name.like(United*)')" },
+          },
+          required: [],
+        },
       },
     ],
   };
@@ -757,14 +839,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // SITES
       // ============================================
       case "unifi_list_sites":
-        result = await unifiRequest("/v1/sites");
+        result = await unifiRequest(`/v1/sites${buildQueryString(args)}`);
         break;
 
       // ============================================
       // DEVICES
       // ============================================
       case "unifi_list_devices":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/devices`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/devices${buildQueryString(args)}`);
         break;
 
       case "unifi_get_device":
@@ -800,7 +882,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "unifi_list_pending_devices":
-        result = await unifiRequest(`/v1/pending-devices`);
+        result = await unifiRequest(`/v1/pending-devices${buildQueryString(args)}`);
         break;
 
       case "unifi_power_cycle_port":
@@ -815,7 +897,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // CLIENTS
       // ============================================
       case "unifi_list_clients":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/clients`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/clients${buildQueryString(args)}`);
         break;
 
       case "unifi_get_client":
@@ -840,7 +922,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // NETWORKS
       // ============================================
       case "unifi_list_networks":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/networks`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/networks${buildQueryString(args)}`);
         break;
 
       case "unifi_get_network":
@@ -886,7 +968,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // WIFI BROADCASTS
       // ============================================
       case "unifi_list_wifi":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/wifi/broadcasts`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/wifi/broadcasts${buildQueryString(args)}`);
         break;
 
       case "unifi_get_wifi":
@@ -923,7 +1005,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // HOTSPOT VOUCHERS
       // ============================================
       case "unifi_list_vouchers":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/hotspot/vouchers${buildQueryString(args)}`);
         break;
 
       case "unifi_get_voucher":
@@ -932,10 +1014,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "unifi_create_voucher": {
         const voucherBody: Record<string, unknown> = {
-          count: args.count || 1,
+          name: args.name,
           timeLimitMinutes: args.timeLimitMinutes,
         };
-        if (args.name) voucherBody.name = args.name;
+        if (args.count) voucherBody.count = args.count;
         if (args.authorizedGuestLimit) voucherBody.authorizedGuestLimit = args.authorizedGuestLimit;
         if (args.dataUsageLimitMBytes) voucherBody.dataUsageLimitMBytes = args.dataUsageLimitMBytes;
         if (args.rxRateLimitKbps) voucherBody.rxRateLimitKbps = args.rxRateLimitKbps;
@@ -949,8 +1031,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "unifi_bulk_delete_vouchers": {
-        let endpoint = `/v1/sites/${args.siteId}/hotspot/vouchers`;
-        if (args.filter) endpoint += `?filter=${encodeURIComponent(args.filter as string)}`;
+        const endpoint = `/v1/sites/${args.siteId}/hotspot/vouchers?filter=${encodeURIComponent(args.filter as string)}`;
         result = await unifiRequest(endpoint, "DELETE");
         break;
       }
@@ -959,7 +1040,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // FIREWALL ZONES
       // ============================================
       case "unifi_list_firewall_zones":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/firewall/zones${buildQueryString(args)}`);
         break;
 
       case "unifi_get_firewall_zone":
@@ -992,7 +1073,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ACL RULES
       // ============================================
       case "unifi_list_acl_rules":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/acl-rules${buildQueryString(args)}`);
         break;
 
       case "unifi_get_acl_rule":
@@ -1033,7 +1114,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // TRAFFIC MATCHING LISTS
       // ============================================
       case "unifi_list_traffic_matching_lists":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/traffic-matching-lists${buildQueryString(args)}`);
         break;
 
       case "unifi_get_traffic_matching_list":
@@ -1066,36 +1147,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // ============================================
       // SUPPORTING RESOURCES
       // ============================================
-      case "unifi_list_wans":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/wans`);
+      case "unifi_list_wans": {
+        const wanParams = new URLSearchParams();
+        if (args.offset !== undefined) wanParams.append("offset", String(args.offset));
+        if (args.limit !== undefined) wanParams.append("limit", String(args.limit));
+        const wanQuery = wanParams.toString() ? `?${wanParams.toString()}` : "";
+        result = await unifiRequest(`/v1/sites/${args.siteId}/wans${wanQuery}`);
         break;
+      }
 
       case "unifi_list_vpn_tunnels":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/vpn/site-to-site-tunnels`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/vpn/site-to-site-tunnels${buildQueryString(args)}`);
         break;
 
       case "unifi_list_vpn_servers":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/vpn/servers`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/vpn/servers${buildQueryString(args)}`);
         break;
 
       case "unifi_list_radius_profiles":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/radius/profiles`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/radius/profiles${buildQueryString(args)}`);
         break;
 
       case "unifi_list_device_tags":
-        result = await unifiRequest(`/v1/sites/${args.siteId}/device-tags`);
+        result = await unifiRequest(`/v1/sites/${args.siteId}/device-tags${buildQueryString(args)}`);
         break;
 
       case "unifi_list_dpi_categories":
-        result = await unifiRequest("/v1/dpi/categories");
+        result = await unifiRequest(`/v1/dpi/categories${buildQueryString(args)}`);
         break;
 
       case "unifi_list_dpi_applications":
-        result = await unifiRequest("/v1/dpi/applications");
+        result = await unifiRequest(`/v1/dpi/applications${buildQueryString(args)}`);
         break;
 
       case "unifi_list_countries":
-        result = await unifiRequest("/v1/countries");
+        result = await unifiRequest(`/v1/countries${buildQueryString(args)}`);
         break;
 
       default:
